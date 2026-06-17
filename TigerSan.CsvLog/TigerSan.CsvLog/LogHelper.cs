@@ -1,11 +1,16 @@
-﻿using CsvHelper;
-using System.Globalization;
+﻿using System;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using TigerSan.CsvOperation;
+using TigerSan.CsvLog.Helpers;
 using TigerSan.CsvLog.Settings;
 
 namespace TigerSan.CsvLog
 {
-    public class LogHelper
+    public class LogHelper : IDisposable
     {
         #region 【Fields】
         #region [Private]
@@ -13,27 +18,39 @@ namespace TigerSan.CsvLog
         private static readonly string ERROR = "ERROR";
         private static readonly string WARNING = "WARNING";
         private static readonly string LogHelperError = "LogHelperError_";
+        /// <summary>默认颜色</summary>
+        private static readonly ConsoleColor _defaultColor = Console.ForegroundColor;
+        /// <summary>是否已销毁</summary>
+        private bool _disposed = false;
+        /// <summary>CSV助手</summary>
+        private readonly CsvHelper<LogData> _csvHelper;
+        /// <summary>写入任务</summary>
+        private Task? _writeTask;
+        /// <summary>取消令牌</summary>
+        private CancellationTokenSource? _cts;
+        /// <summary>日志队列</summary>
+        private ConcurrentQueue<LogData> _logQueue = new ConcurrentQueue<LogData>();
         #endregion [Private]
 
         /// <summary>日志目录</summary>
         public string _logDir = string.Empty;
         /// <summary>文件名</summary>
         public string _fileName = string.Empty;
-        /// <summary>应用启动路径</summary>
-        public static readonly string? _appStartupPath = Path.GetDirectoryName(Environment.ProcessPath);
         #endregion 【Fields】
 
         #region 【Properties】
-        /// <summary>文件路径</summary>
-        private string FilePath { get => $"{_logDir}\\{_fileName}{DateTime.Now.ToString("yyyy-MM-dd")}.csv"; }
         /// <summary>实例</summary>
         public static LogHelper Instance { get; } = new LogHelper();
+        /// <summary>文件路径</summary>
+        private string FilePath { get => $"{_logDir}\\{_fileName}{DateTime.Now.ToString("yyyy-MM-dd")}.csv"; }
         #endregion 【Properties】
 
         #region 【Ctor】
         public LogHelper()
         {
             Init();
+            _csvHelper = new CsvHelper<LogData>(FilePath);
+            StartWriteTask();
         }
         #endregion 【Ctor】
 
@@ -55,13 +72,13 @@ namespace TigerSan.CsvLog
                 }
                 if (!Directory.Exists(_logDir))
                 {
-                    HelperError($"路径不可用：\r\n“{CsvLogSetting.LogDir}”");
-                    _logDir = $"{_appStartupPath}\\Log";
+                    HelperError($"The path is unavailable!{Environment.NewLine}\"{CsvLogSetting.LogDir}\"");
+                    _logDir = $"{ConfigHelper._appStartupPath}\\Log";
                 }
             }
             else
             {
-                _logDir = $"{_appStartupPath}\\Log";
+                _logDir = $"{ConfigHelper._appStartupPath}\\Log";
             }
             #endregion LogDir
 
@@ -75,7 +92,7 @@ namespace TigerSan.CsvLog
             {
                 _fileName = "log_";
             }
-            #endregion LogDir
+            #endregion FileName
         }
         #endregion
 
@@ -83,36 +100,13 @@ namespace TigerSan.CsvLog
         /// <summary>写入CSV</summary>
         private void WriteCsv(LogData record)
         {
+            if (_disposed) return;
             if (!Directory.Exists(_logDir))
                 Directory.CreateDirectory(_logDir);
 
-            List<LogData> records;
-
             try
             {
-                #region 初始化“记录集合”
-                if (!File.Exists(FilePath))
-                {
-                    records = new List<LogData>();
-                }
-                else
-                {
-                    using (var reader = new StreamReader(FilePath))
-                    using (var csvReader = new CsvReader(reader, CultureInfo.InvariantCulture))
-                    {
-                        records = csvReader.GetRecords<LogData>().ToList();
-                    }
-                }
-                #endregion 初始化“记录集合”
-
-                #region 写入“新记录”
-                using (var writer = new StreamWriter(FilePath))
-                using (var csvWriter = new CsvWriter(writer, CultureInfo.InvariantCulture))
-                {
-                    records.Add(record);
-                    csvWriter.WriteRecords(records);
-                }
-                #endregion 写入“新记录”
+                _logQueue.Enqueue(record); // 放入队列
             }
             catch (Exception e)
             {
@@ -142,8 +136,10 @@ namespace TigerSan.CsvLog
                    [CallerFilePath] string filePath = "",
                    [CallerLineNumber] int lineNumber = -1)
         {
-            var helper = new LogHelper();
-            helper._fileName = LogHelperError;
+            var helper = new LogHelper()
+            {
+                _fileName = LogHelperError
+            };
 
             var data = new LogData()
             {
@@ -161,7 +157,7 @@ namespace TigerSan.CsvLog
 
         #region 普通日志
         /// <summary>普通日志</summary>
-        public void Log(string? log,
+        public string Log(string? log,
                    [CallerMemberName] string memberName = "",
                    [CallerFilePath] string filePath = "",
                    [CallerLineNumber] int lineNumber = -1)
@@ -177,12 +173,13 @@ namespace TigerSan.CsvLog
 
             WriteCsv(data);
             Console.WriteLine(GetLogString(data));
+            return data.Log;
         }
         #endregion
 
         #region 警告日志
         /// <summary>警告日志</summary>
-        public void Warning(string? log,
+        public string Warning(string? log,
                    [CallerMemberName] string memberName = "",
                    [CallerFilePath] string filePath = "",
                    [CallerLineNumber] int lineNumber = -1)
@@ -198,12 +195,13 @@ namespace TigerSan.CsvLog
 
             WriteCsv(data);
             ColorWriteLine(GetLogString(data), ConsoleColor.Yellow);
+            return data.Log;
         }
         #endregion
 
         #region 错误日志
         /// <summary>错误日志</summary>
-        public void Error(string? log,
+        public string Error(string? log,
                    [CallerMemberName] string memberName = "",
                    [CallerFilePath] string filePath = "",
                    [CallerLineNumber] int lineNumber = -1)
@@ -219,6 +217,7 @@ namespace TigerSan.CsvLog
 
             WriteCsv(data);
             ColorWriteLine(GetLogString(data), ConsoleColor.Red);
+            return data.Log;
         }
         #endregion
 
@@ -240,10 +239,83 @@ namespace TigerSan.CsvLog
         }
         #endregion
 
+        #region 启动写入任务
+        public void StartWriteTask()
+        {
+            Dispose();
+
+            // 重新创建取消令牌
+            _cts = new CancellationTokenSource();
+
+            _writeTask = Task.Run(async () =>
+            {
+                while (!_cts.Token.IsCancellationRequested)
+                {
+                    if (_logQueue.TryDequeue(out var data))
+                    {
+                        try
+                        {
+                            _csvHelper._path = FilePath;
+                            var res = await _csvHelper.AppendAsync(data);
+                            if (!res.IsSuccess)
+                            {
+                                Console.Error.WriteLine(res.Message);
+                            }
+                        }
+                        catch (Exception e)
+                        {
+                            Console.Error.WriteLine($"LogHelper: {e.Message}");
+                        }
+                    }
+                    else
+                    {
+                        await Task.Delay(50); // 短暂等待，避免空转
+                    }
+                }
+            });
+
+            // 未销毁：
+            _disposed = false;
+        }
+        #endregion
+
+        #region 销毁
+        public void Dispose()
+        {
+            if (_disposed) return;
+
+            // 取消异步写入任务
+            _cts?.Cancel();
+
+            // 等待任务完成（设置10秒超时避免死锁）
+            if (_writeTask != null)
+            {
+                try
+                {
+                    _writeTask.Wait(TimeSpan.FromSeconds(10));
+                }
+                catch (AggregateException)
+                {
+                    // 忽略任务异常
+                }
+            }
+
+            // 释放托管资源
+            _cts?.Dispose();
+
+            // 重置字段
+            _writeTask = null;
+            _cts = null;
+
+            // 已销毁：
+            _disposed = true;
+        }
+        #endregion
+
         #region [附加]
         #region 为Null
         /// <summary>为Null</summary>
-        public void IsNull(string name,
+        public string IsNull(string name,
                    [CallerMemberName] string memberName = "",
                    [CallerFilePath] string filePath = "",
                    [CallerLineNumber] int lineNumber = -1)
@@ -259,12 +331,13 @@ namespace TigerSan.CsvLog
 
             WriteCsv(data);
             ColorWriteLine(GetLogString(data), ConsoleColor.Yellow);
+            return data.Log;
         }
         #endregion
 
         #region 为空
         /// <summary>为空</summary>
-        public void IsEmpty(string name,
+        public string IsEmpty(string name,
                    [CallerMemberName] string memberName = "",
                    [CallerFilePath] string filePath = "",
                    [CallerLineNumber] int lineNumber = -1)
@@ -280,12 +353,13 @@ namespace TigerSan.CsvLog
 
             WriteCsv(data);
             ColorWriteLine(GetLogString(data), ConsoleColor.Yellow);
+            return data.Log;
         }
         #endregion
 
         #region 为Null或空
         /// <summary>为Null或空</summary>
-        public void IsNullOrEmpty(string name,
+        public string IsNullOrEmpty(string name,
                    [CallerMemberName] string memberName = "",
                    [CallerFilePath] string filePath = "",
                    [CallerLineNumber] int lineNumber = -1)
@@ -301,12 +375,13 @@ namespace TigerSan.CsvLog
 
             WriteCsv(data);
             ColorWriteLine(GetLogString(data), ConsoleColor.Yellow);
+            return data.Log;
         }
         #endregion
 
         #region 超出范围
         /// <summary>超出范围</summary>
-        public void IsOutOfRange(string name,
+        public string IsOutOfRange(string name,
                    [CallerMemberName] string memberName = "",
                    [CallerFilePath] string filePath = "",
                    [CallerLineNumber] int lineNumber = -1)
@@ -322,12 +397,13 @@ namespace TigerSan.CsvLog
 
             WriteCsv(data);
             ColorWriteLine(GetLogString(data), ConsoleColor.Yellow);
+            return data.Log;
         }
         #endregion
 
         #region 不包含
         /// <summary>不包含</summary>
-        public void IsNotContain(
+        public string IsNotContain(
             string listName,
             string itemName,
             [CallerMemberName] string memberName = "",
@@ -345,6 +421,7 @@ namespace TigerSan.CsvLog
 
             WriteCsv(data);
             ColorWriteLine(GetLogString(data), ConsoleColor.Yellow);
+            return data.Log;
         }
         #endregion
 
@@ -352,10 +429,9 @@ namespace TigerSan.CsvLog
         /// <summary>打印彩色文本</summary>
         public void ColorWriteLine(string log, ConsoleColor color)
         {
-            var previousColor = Console.ForegroundColor;
             Console.ForegroundColor = color;
             Console.WriteLine(log);
-            Console.ForegroundColor = previousColor;
+            Console.ForegroundColor = _defaultColor;
         }
         #endregion
         #endregion [附加]

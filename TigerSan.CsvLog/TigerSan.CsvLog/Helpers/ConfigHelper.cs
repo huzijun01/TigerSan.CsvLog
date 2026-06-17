@@ -1,15 +1,17 @@
-﻿using System.IO;
+﻿using System;
+using System.IO;
 using System.Xml;
+using System.Diagnostics;
 
 namespace TigerSan.CsvLog.Helpers
 {
     public class ConfigHelper
     {
         #region 【Fields】
-        /// <summary>
-        /// 配置路径
-        /// </summary>
+        /// <summary>配置路径</summary>
         private static string _path = string.Empty;
+        /// <summary>应用启动路径</summary>
+        public static readonly string _appStartupPath = GetStartupPath();
         #endregion 【Fields】
 
         #region 【Ctor】
@@ -28,6 +30,24 @@ namespace TigerSan.CsvLog.Helpers
         #endregion 【Ctor】
 
         #region 【Functions】
+        #region [Private]
+        #region 获取“启动路径”
+        /// <summary>获取“启动路径”</summary>
+        private static string GetStartupPath()
+        {
+            try
+            {
+                return Path.GetDirectoryName(Process.GetCurrentProcess().MainModule.FileName);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e.Message);
+                return AppContext.BaseDirectory;
+            }
+        }
+        #endregion
+        #endregion [Private]
+
         #region 获取值
         public string? GetValue(string xpath)
         {

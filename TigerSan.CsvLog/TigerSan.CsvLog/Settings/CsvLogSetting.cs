@@ -1,4 +1,6 @@
-﻿using System.IO;
+﻿using System;
+using System.IO;
+using System.Reflection;
 using TigerSan.CsvLog.Helpers;
 
 namespace TigerSan.CsvLog.Settings
@@ -6,24 +8,19 @@ namespace TigerSan.CsvLog.Settings
     public static class CsvLogSetting
     {
         #region 【Fields】
-        private static readonly string? _appStartupPath = Path.GetDirectoryName(Environment.ProcessPath);
-        private static readonly string _configPath = $"{_appStartupPath}\\CsvLog.config";
         private static readonly ConfigHelper? _config;
         private static readonly string _baseXpath = "/configuration/logSettings";
+        private static readonly string _configPath = $"{ConfigHelper._appStartupPath}\\CsvLog.config";
         #endregion 【Fields】
 
         #region 【Properties】
-        /// <summary>
-        /// 保存Log的文件夹
-        /// </summary>
+        /// <summary>保存Log的文件夹</summary>
         public static string? LogDir
         {
             get => GetValue(nameof(LogDir));
         }
 
-        /// <summary>
-        /// Log的文件名前缀
-        /// </summary>
+        /// <summary>Log的文件名前缀</summary>
         public static string? FileName
         {
             get => GetValue(nameof(FileName));
@@ -44,8 +41,29 @@ namespace TigerSan.CsvLog.Settings
         {
             if (!File.Exists(_configPath))
             {
-                File.WriteAllBytes(_configPath, Resources.CsvLogConfig);
+                var assembly = Assembly.GetExecutingAssembly();
+                var resourceName = $"{assembly.GetName().Name}.Files.CsvLog.config";
+
+                using (Stream stream = assembly.GetManifestResourceStream(resourceName))
+                {
+                    if (stream == null)
+                    {
+                        var names = assembly.GetManifestResourceNames();
+                        throw new FileNotFoundException($"Resource not found: {resourceName}");
+                    }
+
+                    using (StreamReader reader = new StreamReader(stream))
+                    {
+                        var config = reader.ReadToEnd();
+                        if (string.IsNullOrEmpty(config))
+                        {
+                            Console.WriteLine();
+                        }
+                        File.WriteAllText(_configPath, config);
+                    }
+                }
             }
+
             _config = new ConfigHelper(_configPath);
         }
         #endregion 【Ctor】

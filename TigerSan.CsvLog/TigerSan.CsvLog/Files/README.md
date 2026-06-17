@@ -62,6 +62,10 @@ Log help class.
 
 `DeleteFolder`: Delete the log folder.
 
+`StartWriteTask`: Start writing task..
+
+`Dispose`: Stop writing task.
+
 ### Additional Methods:
 `IsNull`: $"The {name} is null!".
 
